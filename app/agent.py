@@ -60,6 +60,7 @@ class LabAgent:
                 enabled=tracing_enabled(),
             )
             langfuse_client.update_current_span(
+                input={"message": summarize_text(message)},
                 metadata={
                     "doc_count": len(docs),
                     "query_preview": summarize_text(message),
@@ -71,13 +72,21 @@ class LabAgent:
                 },
                 version=prompt.version,
             )
-            # TODO (CP2): instrument retrieve() and FakeLLM.generate() as child
-            # observations. The nested generation must receive prompt, usage and cost.
             with propagate_attributes(prompt=prompt.managed_prompt):
                 response = self.llm.generate(prompt.text)
             quality_score = self._heuristic_quality(message, response.text, docs)
             latency_ms = int((time.perf_counter() - started) * 1000)
             cost_usd = self._estimate_cost(response.usage.input_tokens, response.usage.output_tokens)
+
+            if hasattr(langfuse_client, "score_current_trace"):
+                try:
+                    langfuse_client.score_current_trace(
+                        name="heuristic_quality",
+                        value=quality_score,
+                    )
+                except Exception:
+                    pass
+
 
         metrics.record_request(
             latency_ms=latency_ms,

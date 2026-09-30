@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>K4-L3B Day 13 Monitoring & LLMOps Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: #09090b; color: #f4f4f5; margin: 0; padding: 24px; }
+    .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #27272a; padding-bottom: 16px; margin-bottom: 24px; }
+    .header h1 { font-size: 22px; font-weight: 600; margin: 0; color: #ffffff; letter-spacing: -0.3px; }
+    .meta { font-size: 13px; color: #a1a1aa; }
+    .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+    .card { background: #121215; border-radius: 10px; padding: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); border: 1px solid #27272a; }
+    .card-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; color: #f4f4f5; display: flex; justify-content: space-between; align-items: center; }
+    .card-sub { font-size: 12px; color: #71717a; margin-bottom: 14px; }
+    .stat-badge { font-size: 12px; padding: 3px 10px; border-radius: 6px; background: #18181b; color: #d4d4d8; border: 1px solid #2e2e33; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .stat-badge.alert { background: rgba(239, 68, 68, 0.15); color: #f87171; border-color: rgba(239, 68, 68, 0.4); }
+    .status-healthy { color: #22c55e; background: #14291e; border: 1px solid #166534; padding: 3px 10px; border-radius: 9999px; font-size: 12px; font-weight: 500; }
+    .status-alert { color: #ef4444; background: #2b1515; border: 1px solid #7f1d1d; padding: 3px 10px; border-radius: 9999px; font-size: 12px; font-weight: 500; }
+    canvas { max-height: 220px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>K4-L3B Day 13 Monitoring &amp; LLMOps Dashboard</h1>
+      <div class="meta">Service: day13-l3b-2a202602660-monitoring-llmops-lab | Time range: Last 60m | Refresh: 30s | Source: data/logs.jsonl</div>
+    </div>
+    <div class="meta">
+      Total Requests: <strong style="color:#ffffff;">30</strong> &nbsp;|&nbsp; Status: <span class="status-alert">ANOMALY DETECTED</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- Panel 1: Latency -->
+    <div class="card">
+      <div class="card-title">
+        <span>1. Latency percentiles and TTFT (Unit: ms)</span>
+        <span class="stat-badge alert">P50: 795.5ms | P95: 3013.85ms (ALERT) | Threshold: 3000ms</span>
+      </div>
+      <div class="card-sub">Event: response_sent | P95 TTFT: 50.0ms</div>
+      <canvas id="latencyChart"></canvas>
+    </div>
+
+    <!-- Panel 2: Traffic -->
+    <div class="card">
+      <div class="card-title">
+        <span>2. Request traffic (Unit: requests_per_minute)</span>
+        <span class="stat-badge">1.71 req/min | Threshold: &gt;= 1 rpm</span>
+      </div>
+      <div class="card-sub">Event: request_received | Total requests in window: 30</div>
+      <canvas id="trafficChart"></canvas>
+    </div>
+
+    <!-- Panel 3: Errors -->
+    <div class="card">
+      <div class="card-title">
+        <span>3. Error rate and retrieval success (Unit: percent)</span>
+        <span class="stat-badge">Error: 0.0% | Retrieval: 100.0% | Threshold: &lt;= 2%</span>
+      </div>
+      <div class="card-sub">Events: request_received, request_failed | Failures: 0</div>
+      <canvas id="errorChart"></canvas>
+    </div>
+
+    <!-- Panel 4: Cost -->
+    <div class="card">
+      <div class="card-title">
+        <span>4. Cost over time (Unit: usd)</span>
+        <span class="stat-badge">Total: $0.062733 USD | Threshold: &lt;= $2.50</span>
+      </div>
+      <div class="card-sub">Event: response_sent | Aggregation: sum(cost_usd)</div>
+      <canvas id="costChart"></canvas>
+    </div>
+
+    <!-- Panel 5: Tokens -->
+    <div class="card">
+      <div class="card-title">
+        <span>5. Input and output tokens (Unit: tokens)</span>
+        <span class="stat-badge">In: 1,026 | Out: 3,977 | Threshold: &lt;= 50,000</span>
+      </div>
+      <div class="card-sub">Event: response_sent | Total: 5,003 tokens</div>
+      <canvas id="tokenChart"></canvas>
+    </div>
+
+    <!-- Panel 6: Quality -->
+    <div class="card">
+      <div class="card-title">
+        <span>6. Quality proxy (Unit: score_0_to_1)</span>
+        <span class="stat-badge">Mean: 0.87 | Threshold: &gt;= 0.75</span>
+      </div>
+      <div class="card-sub">Event: response_sent | Metric: heuristic_quality</div>
+      <canvas id="qualityChart"></canvas>
+    </div>
+  </div>
+
+  <script>
+    Chart.defaults.color = '#a1a1aa';
+    Chart.defaults.borderColor = '#222226';
+    if (Chart.defaults.scale && Chart.defaults.scale.grid) {
+      Chart.defaults.scale.grid.color = '#1c1c20';
+    }
+
+    const labels = ["57:04.349552", "57:04.810384", "57:05.219691", "57:05.689650", "57:06.146907", "57:06.565397", "57:07.095721", "57:07.523467", "57:07.927123", "57:08.403901", "59:50.197801", "59:53.201932", "59:56.232320", "59:59.124043", "00:02.022702", "14:01.008797", "14:01.459924", "14:03.093298", "14:03.552612", "14:04.134004", "14:05.224249", "14:06.185238", "14:06.605759", "14:07.882181", "14:09.670968", "14:30.822054", "14:31.830455", "14:32.277321", "14:32.921230", "14:33.882070"];
+
+    // 1. Latency (White line + Rose TTFT + Red alert threshold)
+    new Chart(document.getElementById('latencyChart'), {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [
+          { label: 'Latency (ms)', data: [1112, 453, 403, 463, 450, 412, 522, 421, 398, 471, 3455, 2999, 3026, 2884, 2896, 1355, 446, 1627, 454, 575, 1083, 951, 414, 1271, 1782, 1761, 1003, 441, 640, 958], borderColor: '#f4f4f5', backgroundColor: 'rgba(255,255,255,0.05)', fill: true, tension: 0.2, borderWidth: 2, pointRadius: 2 },
+          { label: 'TTFT (ms)', data: [50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 51, 50, 50, 50, 50, 50], borderColor: '#fb7185', borderDash: [4, 4], tension: 0.2, borderWidth: 1.8, pointRadius: 0 }
+        ]
+      },
+      options: {
+        plugins: {
+          annotation: {
+            annotations: {
+              line1: { type: 'line', yMin: 3000, yMax: 3000, borderColor: '#ef4444', borderWidth: 2, label: { content: 'SLO Threshold: 3000ms', display: true, position: 'end', color: '#f87171', backgroundColor: 'rgba(24,24,27,0.85)' } }
+            }
+          }
+        },
+        scales: {
+          x: { grid: { color: '#1c1c20' } },
+          y: { beginAtZero: true, suggestedMax: 3500, grid: { color: '#1c1c20' } }
+        }
+      }
+    });
+
+    // 2. Traffic (Warm Amber Yellow bars)
+    new Chart(document.getElementById('trafficChart'), {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{ label: 'Requests per request point', data: labels.map(() => 1), backgroundColor: '#fbbf24', borderRadius: 3 }]
+      },
+      options: {
+        plugins: {
+          annotation: {
+            annotations: {
+              line1: { type: 'line', yMin: 1, yMax: 1, borderColor: '#71717a', borderWidth: 1.5, borderDash: [3, 3], label: { content: 'Threshold: 1 req/min', display: true, position: 'end', color: '#a1a1aa', backgroundColor: 'rgba(24,24,27,0.85)' } }
+            }
+          }
+        },
+        scales: {
+          x: { grid: { color: '#1c1c20' } },
+          y: { beginAtZero: true, suggestedMax: 5, grid: { color: '#1c1c20' } }
+        }
+      }
+    });
+
+    // 3. Errors (Rose/Red error + Emerald green retrieval)
+    new Chart(document.getElementById('errorChart'), {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [
+          { label: 'Error Rate (%)', data: labels.map(() => 0.0), borderColor: '#f43f5e', backgroundColor: 'rgba(244,63,94,0.12)', fill: true, borderWidth: 2, pointRadius: 2 },
+          { label: 'Retrieval Success (%)', data: labels.map(() => 100.0), borderColor: '#10b981', borderWidth: 2, pointRadius: 0 }
+        ]
+      },
+      options: {
+        plugins: {
+          annotation: {
+            annotations: {
+              line1: { type: 'line', yMin: 2, yMax: 2, borderColor: '#ef4444', borderWidth: 1.5, borderDash: [4, 4], label: { content: 'Threshold: 2%', display: true, position: 'end', color: '#f87171', backgroundColor: 'rgba(24,24,27,0.85)' } }
+            }
+          }
+        },
+        scales: {
+          x: { grid: { color: '#1c1c20' } },
+          y: { beginAtZero: true, max: 100, grid: { color: '#1c1c20' } }
+        }
+      }
+    });
+
+    // 4. Cost (Golden Yellow line with soft glow)
+    new Chart(document.getElementById('costChart'), {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{ label: 'Cost USD', data: [0.002028, 0.002616, 0.002484, 0.001932, 0.002634, 0.002565, 0.001377, 0.002316, 0.002013, 0.001419, 0.00273, 0.00168, 0.001458, 0.0021, 0.002532, 0.001803, 0.002511, 0.002049, 0.002307, 0.001614, 0.002025, 0.002457, 0.001536, 0.002718, 0.001569, 0.002205, 0.002742, 0.002325, 0.001413, 0.001575], borderColor: '#facc15', fill: true, backgroundColor: 'rgba(250,204,21,0.1)', tension: 0.2, borderWidth: 2, pointRadius: 2 }]
+      },
+      options: {
+        plugins: {
+          annotation: {
+            annotations: {
+              line1: { type: 'line', yMin: 2.5, yMax: 2.5, borderColor: '#71717a', borderWidth: 1.5, borderDash: [4, 4], label: { content: 'Threshold: $2.50', display: true, position: 'end', color: '#a1a1aa', backgroundColor: 'rgba(24,24,27,0.85)' } }
+            }
+          }
+        },
+        scales: {
+          x: { grid: { color: '#1c1c20' } },
+          y: { beginAtZero: true, suggestedMax: 0.005, grid: { color: '#1c1c20' } }
+        }
+      }
+    });
+
+    // 5. Tokens (Pastel Pink in + Hot Pink out)
+    new Chart(document.getElementById('tokenChart'), {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [
+          { label: 'Tokens In', data: [36, 32, 43, 39, 33, 35, 29, 27, 36, 28, 35, 35, 36, 35, 34, 36, 32, 43, 39, 33, 35, 29, 27, 36, 28, 35, 34, 35, 36, 35], backgroundColor: '#fbcfe8', borderRadius: 3 },
+          { label: 'Tokens Out', data: [128, 168, 157, 121, 169, 164, 86, 149, 127, 89, 175, 105, 90, 133, 162, 113, 161, 128, 146, 101, 128, 158, 97, 174, 99, 140, 176, 148, 87, 98], backgroundColor: '#ec4899', borderRadius: 3 }
+        ]
+      },
+      options: {
+        scales: {
+          x: { stacked: true, grid: { color: '#1c1c20' } },
+          y: { stacked: true, suggestedMax: 500, grid: { color: '#1c1c20' } }
+        }
+      }
+    });
+
+    // 6. Quality (Emerald Green line with soft fill)
+    new Chart(document.getElementById('qualityChart'), {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{ label: 'Quality Score', data: [0.9, 0.8, 0.8, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.8, 0.8, 0.9, 0.8, 0.9, 0.9, 0.8, 0.8, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.8, 0.9, 0.8, 0.9, 0.8], borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.1)', fill: true, tension: 0.2, borderWidth: 2, pointRadius: 2 }]
+      },
+      options: {
+        plugins: {
+          annotation: {
+            annotations: {
+              line1: { type: 'line', yMin: 0.75, yMax: 0.75, borderColor: '#fbbf24', borderWidth: 1.5, borderDash: [4, 4], label: { content: 'Threshold: 0.75', display: true, position: 'end', color: '#fbbf24', backgroundColor: 'rgba(24,24,27,0.85)' } }
+            }
+          }
+        },
+        scales: {
+          x: { grid: { color: '#1c1c20' } },
+          y: { min: 0.0, max: 1.0, grid: { color: '#1c1c20' } }
+        }
+      }
+    });
+  </script>
+</body>
+</html>

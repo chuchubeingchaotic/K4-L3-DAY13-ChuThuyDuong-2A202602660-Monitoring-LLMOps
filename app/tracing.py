@@ -4,6 +4,12 @@ import os
 from contextlib import contextmanager
 from typing import Any
 
+from dotenv import load_dotenv
+
+load_dotenv()
+if os.getenv("LANGFUSE_BASE_URL") and not os.getenv("LANGFUSE_HOST"):
+    os.environ["LANGFUSE_HOST"] = os.getenv("LANGFUSE_BASE_URL")
+
 try:
     from langfuse import get_client, observe, propagate_attributes
 
@@ -24,6 +30,16 @@ except ImportError:  # pragma: no cover - chỉ dùng khi chưa cài requirement
         def update_current_generation(self, **kwargs: Any) -> None:
             return None
 
+        @contextmanager
+        def start_as_current_observation(self, **kwargs: Any):
+            yield None
+
+        def score_current_trace(self, **kwargs: Any) -> None:
+            return None
+
+        def flush(self) -> None:
+            return None
+
     def get_client():
         return _DummyClient()
 
@@ -40,3 +56,11 @@ def tracing_enabled() -> bool:
     return LANGFUSE_SDK_AVAILABLE and bool(
         os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY")
     )
+
+
+def flush_traces() -> None:
+    if tracing_enabled():
+        client = get_langfuse_client()
+        if hasattr(client, "flush"):
+            client.flush()
+
